@@ -86,7 +86,7 @@ gate, leave-one-out replay, ledger.
 
 ## Tools, third-party components and AI assistance
 
-- **Runtime:** Python 3.11, Streamlit (UI), and the Python standard library (`hashlib`, `json`, `re`, `dataclasses`, `datetime`). **Tests:** pytest. No external APIs, datasets or models are used.
+- **Runtime:** Python 3.11, Streamlit (UI), and the Python standard library (`hashlib`, `json`, `re`, `dataclasses`, `datetime`). **Tests:** pytest. The default scripted mode and automated tests use no external APIs, datasets, or model calls; the optional live-LLM mode calls Anthropic when enabled and configured with an API key.
 - **AI-assisted development:** the team used Claude (Anthropic) as a development assistant for substantial parts of the code, tests, README and presentation. The team directed the concept and scope, reviewed and ran the code, and is responsible for its content. Claims are limited to what the code and tests demonstrate.
 - **Prior work:** leave-one-out replay is a standard ablation idea and hash-chained logs are a well-known technique. The contribution here is the investigation workflow that combines them for agent memory, as a concept prototype. Related work is listed under References.
 
