@@ -1,7 +1,7 @@
 """MemorySleuth core logic.
 
-Everything here is deterministic and simulated. There is no LLM, no real
-retrieval and no real email. The pieces are kept separate on purpose:
+The default agent is deterministic and scripted. An optional LLM-backed agent
+(llm_agent.py) can be plugged in. There is no real retrieval and no real email. The pieces are kept separate on purpose:
 
   * propose_action()  - the scripted, rule-based "agent" (reads memory text)
   * policy_gate()     - the policy check; it receives ONLY the proposed action
@@ -15,7 +15,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 APPROVED_RECIPIENTS = frozenset({"finance@company.test"})
 GENESIS_HASH = "0" * 64
@@ -31,7 +31,12 @@ class Memory:
 
     @property
     def digest(self) -> str:
-        return hashlib.sha256(self.text.encode("utf-8")).hexdigest()[:12]
+        return self.full_digest[:12]
+
+    @property
+    def full_digest(self) -> str:
+        """Full SHA-256 of the memory text; stored in every ledger record."""
+        return hashlib.sha256(self.text.encode("utf-8")).hexdigest()
 
 
 MEMORIES: dict[str, Memory] = {
@@ -103,34 +108,70 @@ class Decision:
 
 
 def policy_gate(action: dict) -> Decision:
-    """Deny by default. Checks the tool and the recipient only (a known limit)."""
+    """Deny by default and fail closed. Checks the tool and the recipient only (a known limit)."""
+    if not isinstance(action, dict):
+        return Decision(False, "INVALID_ACTION", "Action is not a well-formed object")
     if action.get("tool") != "send_report":
         return Decision(False, "TOOL_NOT_ALLOWED", "Tool is not on the allow-list")
     recipient = action.get("recipient")
-    if not recipient:
+    if recipient is None or recipient == "":
         return Decision(False, "NO_RECIPIENT", "No recipient was proposed")
+    if not isinstance(recipient, str):
+        return Decision(False, "INVALID_ACTION", "Recipient is not a string")
     if recipient not in APPROVED_RECIPIENTS:
         return Decision(False, "RECIPIENT_NOT_APPROVED", "Recipient is not approved")
     return Decision(True, "RECIPIENT_APPROVED", "Recipient matches approved policy")
 
 
+def strict_policy_gate(action: dict) -> Decision:
+    """Stricter optional gate: also denies any extra text added to the report.
+
+    Closes the scenario C blind spot of the standard gate. It still takes only the action
+    and fails closed; extra report text is denied because no text is on an allow-list.
+    """
+    decision = policy_gate(action)
+    if decision.allowed and action.get("extra_line"):
+        return Decision(False, "CONTENT_NOT_ALLOWED", "Extra report text is not on the allow-list")
+    return decision
+
+
 # --- leave-one-out replay ---------------------------------------------------
 
-def influence(memories) -> tuple[list[str], list[str]]:
+def influence(memories, agent=None) -> tuple[list[str], list[str]]:
     """Return (influential, candidates) memory IDs.
 
     A memory is influential if removing it changes the proposed action.
     A candidate is an influential memory whose trust label is "untrusted".
     This is one deterministic run, so it is a replay hint, not causal proof.
     """
+    agent = agent or propose_action
     memories = list(memories)
-    baseline = propose_action(memories)
+    baseline = agent(memories)
     influential = [
         m.id for m in memories
-        if propose_action([x for x in memories if x.id != m.id]) != baseline
+        if agent([x for x in memories if x.id != m.id]) != baseline
     ]
-    candidates = [i for i in influential if MEMORIES[i].trust == "untrusted"]
+    candidates = [m.id for m in memories if m.id in influential and m.trust == "untrusted"]
     return influential, candidates
+
+
+def group_influence(memories, agent=None) -> list[str]:
+    """Joint removal check for redundant poison.
+
+    Single leave-one-out misses poison planted twice: removing either copy changes
+    nothing. This removes ALL untrusted memories together and reports their IDs if
+    the proposed action changes. It still relies on assigned trust labels and is a
+    replay hint, not proof.
+    """
+    agent = agent or propose_action
+    memories = list(memories)
+    untrusted = [m for m in memories if m.trust == "untrusted"]
+    if not untrusted:
+        return []
+    trusted_only = [m for m in memories if m.trust != "untrusted"]
+    if agent(trusted_only) != agent(memories):
+        return [m.id for m in untrusted]
+    return []
 
 
 # --- hash-chained ledger ----------------------------------------------------
@@ -140,25 +181,46 @@ def _digest(body: dict) -> str:
     return hashlib.sha256(blob).hexdigest()
 
 
-def make_record(prev_hash: str, scenario: Scenario, now: datetime | None = None) -> dict:
+def _utc_stamp(now: datetime | None) -> str:
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is not None:
+        now = now.astimezone(timezone.utc)
+    return now.strftime("%Y-%m-%dT%H:%M:%SZ")  # naive input is treated as UTC
+
+
+def make_record(prev_hash: str, scenario: Scenario, now: datetime | None = None,
+                seq: int = 1, agent=None, agent_name: str = "scripted",
+                gate=None, gate_name: str = "standard") -> dict:
+    """Build one ledger record. `agent` is any callable(memories) -> action dict.
+
+    The default is the scripted rule-based agent; an LLM-backed agent can be passed in
+    (see llm_agent.py). The gate is the same either way: it sees only the action.
+    """
+    agent = agent or propose_action
     mems = [MEMORIES[i] for i in scenario.retrieved]
-    action = propose_action(mems)
-    decision = policy_gate(action)
-    influential, candidates = influence(mems)
+    action = agent(mems)
+    decision = (gate or policy_gate)(action)
+    influential, candidates = influence(mems, agent)
+    group = [] if candidates else group_influence(mems, agent)
     advisory = ""
     if decision.allowed and candidates:
         advisory = ("Allowed by policy, but untrusted memory influenced the action: "
                     + ", ".join(candidates) + ". The current policy does not check content.")
     body = {
-        "time": (now or datetime.now()).strftime("%H:%M:%S"),
+        "seq": seq,
+        "time": _utc_stamp(now),
         "scenario": f"{scenario.key}: {scenario.name}",
+        "agent": agent_name,
+        "policy": gate_name,
         "retrieved": list(scenario.retrieved),
+        "retrieved_digests": {m.id: m.full_digest for m in mems},
         "proposed": action,
         "decision": "ALLOWED" if decision.allowed else "BLOCKED",
         "reason_code": decision.code,
         "reason": decision.reason,
         "influential": influential,
         "candidates": candidates,
+        "group_candidates": group,
         "advisory": advisory,
         "prev_hash": prev_hash,
     }
@@ -166,12 +228,19 @@ def make_record(prev_hash: str, scenario: Scenario, now: datetime | None = None)
     return body
 
 
-def verify_chain(records: list[dict]) -> tuple[bool, int | None]:
-    """Return (ok, index of first bad record)."""
+def verify_chain(records: list[dict], expected_head: str | None = None) -> tuple[bool, int | None]:
+    """Return (ok, index of first bad record).
+
+    The chain alone cannot detect deletion of the LAST records or an empty ledger.
+    Pass expected_head (the head hash noted outside the ledger) to detect that;
+    a head mismatch is reported at index len(records).
+    """
     prev = GENESIS_HASH
     for i, rec in enumerate(records):
         body = {k: v for k, v in rec.items() if k != "hash"}
         if rec.get("prev_hash") != prev or _digest(body) != rec.get("hash"):
             return False, i
         prev = rec["hash"]
+    if expected_head is not None and prev != expected_head:
+        return False, len(records)
     return True, None

@@ -8,9 +8,11 @@
 Built by Team HEXELLE (Vyshnavi, Abhishek) for the Mitigata CyberForge Hackathon 2026.
 **Live demo:** https://memorysleuth-ktta2duyosxyjccycerhtg.streamlit.app/
 
-> **Scope, stated plainly:** this is a deterministic concept prototype. There is no LLM, no real
-> retrieval, no automated poisoning detection and no real email. Trust labels are assigned by the
-> demo. It demonstrates an enforcement-and-evidence *workflow*; it is not a detector.
+> **Scope, stated plainly:** the default agent is a deterministic, scripted concept prototype. An
+> optional live-LLM agent (sidebar toggle, your own API key) proposes the action through the same
+> gate, replay and ledger. There is no real retrieval, no automated poisoning detection and no real
+> email. Trust labels are assigned by the demo. It demonstrates an enforcement-and-evidence
+> *workflow*; it is not a detector.
 
 ## What the demo shows
 
@@ -28,13 +30,18 @@ Scenario C is intentional. The gate checks the recipient only, so it allows a re
 altered by untrusted memory. The ledger records the advisory, but nothing blocks it. We show this
 limit instead of hiding it.
 
+**Strict policy (optional sidebar toggle, off by default):** `strict_policy_gate` also denies any extra
+report text, so scenario C is BLOCKED (`CONTENT_NOT_ALLOWED`) while A and B are unchanged. It is a
+deliberately blunt allow-list, not a content classifier. Each ledger record names the policy used.
+
 ## What is implemented
 
-- **Rule-based agent** (`propose_action`): reads memory text with simple patterns; later memories override earlier ones. Not an LLM.
-- **Independent policy gate** (`policy_gate`): deny-by-default; its function signature takes only the proposed action, never memory text. A unit test enforces that.
-- **Leave-one-out replay** (`influence`): re-runs the agent with each memory removed. A memory is *influential* if that changes the action, and a *candidate* if it is also untrusted. A trusted, benign memory (MEM-003) can be influential without being flagged.
-- **Hash-chained ledger** (`make_record`, `verify_chain`): each record includes the previous record's hash. The UI shows an integrity check, a tamper check on a copy, and JSON export.
-- **Tests** (`tests/test_core.py`, 11 tests) cover the gate, the agent, all three scenarios, the benign control, and tamper detection.
+- **Rule-based agent** (`propose_action`): reads memory text with simple patterns; later memories override earlier ones. This is the default.
+- **Optional live-LLM agent** (`llm_agent.py`): the same pipeline with a real model as the agent. It only returns a proposed action as JSON; output is validated and fails closed, nothing is executed, and the gate never sees memory text or model reasoning. Each ledger record names the agent used (`scripted` or `llm:<model>`). With a real model, replay is a single trial and runs can differ, so it shows influence, not causal proof. Enable it in the sidebar and enter an Anthropic API key (or set `ANTHROPIC_API_KEY` / Streamlit secrets); `MEMORYSLEUTH_MODEL` overrides the default model.
+- **Independent policy gate** (`policy_gate`): deny-by-default and fail-closed on malformed input; its function signature takes only the proposed action, never memory text. A unit test enforces that.
+- **Leave-one-out replay** (`influence`): re-runs the agent with each memory removed. A memory is *influential* if that changes the action, and a *candidate* if it is also untrusted. A trusted, benign memory (MEM-003) can be influential without being flagged. A joint-removal check (`group_influence`) also flags untrusted memories whose *combined* removal changes the action, which catches poison planted twice.
+- **Hash-chained ledger** (`make_record`, `verify_chain`): each record includes the previous record's hash, a sequence number, a UTC timestamp and the full SHA-256 of every retrieved memory's text, so the evidence is bound to what the memory said. The UI shows an integrity check, a tamper check and a truncation check on copies, the head hash, and JSON export.
+- **Tests** (`tests/`, 29 tests; the LLM-agent tests use a fake client, so no API key or network is needed) cover the gate (including malformed input), the agent, all three scenarios, the benign control, memory digests, redundant poison, tamper detection, truncation and the recomputed-rewrite limit.
 
 ## Architecture
 
@@ -62,8 +69,9 @@ gate, leave-one-out replay, ledger.
 ## Known limits
 
 - The agent, retrieval and trust labels are scripted; the suspicious label is predefined, not detected.
-- Leave-one-out here is a single deterministic run. With a real model it would need repeated trials, and would give "candidate influence", not proof.
+- Leave-one-out here is a single deterministic run. With a real model it would need repeated trials, and would give "candidate influence", not proof. Single removal misses redundant poison; the joint-removal check covers only the all-untrusted case and relies on assigned trust labels.
 - The ledger is hash-chained and exportable but lives in the browser session and can be cleared.
+- The chain alone cannot detect a full rewrite with recomputed hashes, deletion of the latest records, or an empty ledger. Detecting those needs a head hash stored outside the ledger (signed or anchored elsewhere); this demo keeps that anchor in the same session, so it demonstrates the idea, not the protection.
 - The gate runs in the same process as the agent. Its independence is a design principle, not deployment isolation. Production would use a separate service with its own credentials.
 - Two or three scripted cases are a demonstration, not a benchmark. No detection accuracy is claimed.
 
@@ -75,6 +83,12 @@ gate, leave-one-out replay, ledger.
 4. Repeated-trial leave-one-out replay against a real model.
 5. Persistent, access-controlled ledger storage.
 6. Quarantine and rollback of suspect memory.
+
+## Tools, third-party components and AI assistance
+
+- **Runtime:** Python 3.11, Streamlit (UI), and the Python standard library (`hashlib`, `json`, `re`, `dataclasses`, `datetime`). **Tests:** pytest. No external APIs, datasets or models are used.
+- **AI-assisted development:** the team used Claude (Anthropic) as a development assistant for substantial parts of the code, tests, README and presentation. The team directed the concept and scope, reviewed and ran the code, and is responsible for its content. Claims are limited to what the code and tests demonstrate.
+- **Prior work:** leave-one-out replay is a standard ablation idea and hash-chained logs are a well-known technique. The contribution here is the investigation workflow that combines them for agent memory, as a concept prototype. Related work is listed under References.
 
 ## Run it
 
