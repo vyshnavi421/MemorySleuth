@@ -112,11 +112,15 @@ python -m pytest -q
 
 ## References
 
-1. I. Habler, "Memory Is a Feature. It Is Also an Attack Surface," OWASP GenAI Security Project, 13 May 2026.
-2. OWASP, "Top 10 for Agentic Applications for 2026," ASI06: Memory & Context Poisoning, Dec 2025.
+1. Idan Habler, ["Memory Is a Feature. It Is Also an Attack Surface"](https://genai.owasp.org/2026/05/13/memory-is-a-feature-it-is-also-an-attack-surface/), OWASP GenAI Security Project, 13 May 2026. This article discusses OWASP ASI06: Memory & Context Poisoning.
+2. OWASP GenAI Security Project, ["OWASP Top 10 for Agentic Applications for 2026"](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/), published 9 December 2025; see ASI06, Memory & Context Poisoning.
 3. Pulipaka et al., "Hidden in Memory: Sleeper Memory Poisoning in LLM Agents," arXiv:2605.15338 (preprint).
 4. Chen et al., "AgentPoison: Red-teaming LLM Agents via Poisoning Memory or Knowledge Bases," NeurIPS 2024, arXiv:2407.12784.
 5. Dong et al., MINJA, arXiv:2503.03704 (NeurIPS 2025). Title in the deck: "Memory Injection Attacks on LLM Agents via Query-Only Interaction"; an earlier version was titled "A Practical Memory Injection Attack against LLM Agents."
 6. Sunil et al., "Memory Poisoning Attack and Defense on Memory Based LLM-Agents," arXiv:2601.05504 (preprint).
 
 Published results in these papers are from other systems and are not results for MemorySleuth.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
