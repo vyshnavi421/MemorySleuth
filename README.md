@@ -1,4 +1,4 @@
-# 🔎 MemorySleuth
+#  MemorySleuth
 
 **Memory poisoning investigation for AI agents: guard the action, keep the evidence.**
 
